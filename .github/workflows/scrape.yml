@@ -2,19 +2,20 @@ name: Daily BlaBlaCar Scrape
 
 on:
   schedule:
-    - cron: '30 3 * * *'    # 9:00 AM IST every day
-  workflow_dispatch:          # manual trigger button on GitHub
+    - cron: '30 3 * * *'
+  workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -25,10 +26,10 @@ jobs:
           playwright install-deps
 
       - name: Run scraper
-        run: python3 scraper.py
+        run: python3 scraper_headless.py
 
-      - name: Upload database as artifact
-        uses: actions/upload-artifact@v3
+      - name: Upload database
+        uses: actions/upload-artifact@v4
         with:
           name: blablacar-day-${{ github.run_number }}
           path: blablacar_data.db
