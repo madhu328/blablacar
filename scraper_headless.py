@@ -109,7 +109,7 @@ def parse_rides(html, from_city, to_city, travel_date):
             seats_available = None
 
             # ── Method 1: search full card text for
-            #    "X seat left" or "X seats left" pattern ───────
+            #    "X seat(s) left" or "X seats available" ───────
             card_text = card.get_text(separator=" ", strip=True).lower()
             seat_patterns = [
                 r'(\d+)\s*seat[s]?\s*left',
@@ -139,9 +139,8 @@ def parse_rides(html, from_city, to_city, travel_date):
                         seats_available = int(p)
                         break
 
-            # ── Method 3: if still None →
-            #    BlaBlaCar hides count when ALL seats are free
-            #    so assume all 3 seats are available ──────────
+            # ── Method 3: still None means BlaBlaCar is not
+            #    showing count = all 3 seats are available ─────
             if seats_available is None:
                 seats_available = 3
 
@@ -171,7 +170,7 @@ def parse_rides(html, from_city, to_city, travel_date):
 
 
 # ══════════════════════════════════════════════════════
-#  STEP 3 — Scrape one route (with block retry)
+#  STEP 3 — Scrape one route (with block detection)
 # ══════════════════════════════════════════════════════
 
 def scrape_route(page, from_city, to_city, travel_date):
@@ -179,32 +178,38 @@ def scrape_route(page, from_city, to_city, travel_date):
            f"?fn={from_city}&tn={to_city}&db={travel_date}&seats=1")
 
     print(f"\n  → Scraping {from_city} → {to_city} on {travel_date}")
-    page.goto(url, wait_until="domcontentloaded")
-    time.sleep(random.uniform(6, 10))
 
-    # Human-like scrolling to load all cards
-    for _ in range(3):
-        page.mouse.wheel(0, 600)
-        time.sleep(random.uniform(1.5, 2.5))
-
-    html = page.content()
-
-    # ── Block detection and retry ──────────────────────
-    if "You have been blocked" in html:
-        print(f"  ⚠ Blocked! Going to homepage and retrying in 30s...")
-        time.sleep(30)
-        page.goto("https://www.blablacar.in", wait_until="domcontentloaded")
-        time.sleep(random.uniform(5, 8))
+    try:
         page.goto(url, wait_until="domcontentloaded")
-        time.sleep(random.uniform(8, 12))
-        html = page.content()
-        if "You have been blocked" in html:
-            print(f"  ✗ Still blocked. Skipping this route.")
-            return []
+        time.sleep(random.uniform(6, 10))
 
-    rides = parse_rides(html, from_city, to_city, travel_date)
-    print(f"  ✓ Found {len(rides)} rides")
-    return rides
+        # Human-like scrolling
+        for _ in range(3):
+            page.mouse.wheel(0, 600)
+            time.sleep(random.uniform(1.5, 2.5))
+
+        html = page.content()
+
+        # ── Block detection and retry ──────────────────
+        if "You have been blocked" in html:
+            print(f"  ⚠ Blocked! Retrying after 30s...")
+            time.sleep(30)
+            page.goto("https://www.blablacar.in", wait_until="domcontentloaded")
+            time.sleep(random.uniform(5, 8))
+            page.goto(url, wait_until="domcontentloaded")
+            time.sleep(random.uniform(8, 12))
+            html = page.content()
+            if "You have been blocked" in html:
+                print(f"  ✗ Still blocked. Skipping.")
+                return []
+
+        rides = parse_rides(html, from_city, to_city, travel_date)
+        print(f"  ✓ Found {len(rides)} rides")
+        return rides
+
+    except Exception as e:
+        print(f"  ✗ Error scraping {from_city} → {to_city}: {e}")
+        return []
 
 
 # ══════════════════════════════════════════════════════
@@ -232,12 +237,13 @@ def save_rides(con, rides):
 
 # ══════════════════════════════════════════════════════
 #  STEP 5 — Main: run all 6 routes
+#  headless=True for GitHub Actions (no screen on server)
 # ══════════════════════════════════════════════════════
 
 def main():
     travel_date = date.today().strftime("%Y-%m-%d")
     print(f"\n{'='*55}")
-    print(f"  BlaBlaCar Scraper — {travel_date}")
+    print(f"  BlaBlaCar Scraper (Headless) — {travel_date}")
     print(f"{'='*55}")
 
     con   = setup_db()
@@ -245,10 +251,12 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=False,
+            headless=True,              # True for GitHub server (no screen)
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
+                "--disable-dev-shm-usage",   # required on Linux servers
+                "--disable-gpu",
             ]
         )
         context = browser.new_context(
@@ -303,8 +311,7 @@ def main():
             SUM(seats_total)               as total_capacity,
             SUM(seats_booked)              as total_booked,
             SUM(seats_available)           as total_available,
-            ROUND(AVG(price), 0)           as avg_price,
-            ROUND(AVG(seats_available), 1) as avg_seats_free
+            ROUND(AVG(price), 0)           as avg_price
         FROM rides
         WHERE travel_date = ?
         GROUP BY from_city, to_city
