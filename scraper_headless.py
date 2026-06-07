@@ -88,16 +88,40 @@ def parse_rides(html, from_city, to_city, travel_date):
                             break
 
             seats_available = None
-            for p in parts:
-                if re.match(r'^[1-3]$', p):
-                    if rating and p == str(int(rating)):
-                        continue
-                    seats_available = int(p)
-                    break
 
-            seats_total  = 3
-            seats_booked = (seats_total - seats_available) if seats_available is not None else None
+# Method 1: search full text for "X seat(s) left"
+card_text = card.get_text(separator=" ", strip=True).lower()
+seat_patterns = [
+    r'(\d+)\s*seat[s]?\s*left',
+    r'(\d+)\s*seat[s]?\s*available',
+    r'(\d+)\s*place[s]?\s*left',
+]
+for pattern in seat_patterns:
+    m = re.search(pattern, card_text)
+    if m:
+        seats_available = int(m.group(1))
+        break
 
+# Method 2: standalone number after destination
+if seats_available is None:
+    dest_idx = next(
+        (j for j, x in enumerate(parts) if x == to_city), 0
+    )
+    for i, p in enumerate(parts):
+        if i <= dest_idx:
+            continue
+        if re.match(r'^[1-3]$', p):
+            if rating and abs(float(p) - float(rating)) < 0.01:
+                continue
+            seats_available = int(p)
+            break
+
+# Method 3: nothing found = all 3 seats available
+if seats_available is None:
+    seats_available = 3
+
+seats_total  = 3
+seats_booked = seats_total - seats_available
             if len(times) >= 2 and price:
                 rides.append({
                     "travel_date":     travel_date,
